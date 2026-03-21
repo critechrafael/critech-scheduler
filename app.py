@@ -6,14 +6,26 @@ from datetime import datetime
 import threading
 import time
 import schedule
+import cloudinary
+import cloudinary.uploader
 
 app = Flask(__name__)
 
 # Configurações
 ACCESS_TOKEN = os.environ.get('ACCESS_TOKEN', '')
 INSTAGRAM_USER_ID = os.environ.get('INSTAGRAM_USER_ID', '17841459866694291')
+CLOUDINARY_CLOUD_NAME = os.environ.get('CLOUDINARY_CLOUD_NAME', '')
+CLOUDINARY_API_KEY = os.environ.get('CLOUDINARY_API_KEY', '')
+CLOUDINARY_API_SECRET = os.environ.get('CLOUDINARY_API_SECRET', '')
 
-# Armazenamento simples em memória (posts agendados)
+# Configurar Cloudinary
+cloudinary.config(
+    cloud_name=CLOUDINARY_CLOUD_NAME,
+    api_key=CLOUDINARY_API_KEY,
+    api_secret=CLOUDINARY_API_SECRET
+)
+
+# Armazenamento em memória
 scheduled_posts = []
 
 HTML_TEMPLATE = '''
@@ -34,402 +46,87 @@ HTML_TEMPLATE = '''
             --text: #ffffff;
             --muted: #888888;
         }
-
         * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: var(--black); color: var(--text); font-family: 'DM Sans', sans-serif; min-height: 100vh; }
+        header { background: var(--dark); border-bottom: 1px solid var(--border); padding: 20px 40px; display: flex; align-items: center; gap: 16px; }
+        .logo { width: 42px; height: 42px; background: var(--yellow); border-radius: 10px; display: flex; align-items: center; justify-content: center; font-family: 'Syne', sans-serif; font-weight: 800; color: var(--black); font-size: 18px; }
+        header h1 { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 20px; }
+        header span { color: var(--yellow); }
+        .badge { background: #1a2a1a; color: #4caf50; border: 1px solid #2a4a2a; padding: 4px 12px; border-radius: 20px; font-size: 12px; margin-left: auto; }
+        .container { max-width: 1100px; margin: 0 auto; padding: 40px 20px; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+        @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } header { padding: 16px 20px; } }
+        .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 28px; }
+        .card h2 { font-family: 'Syne', sans-serif; font-weight: 700; font-size: 18px; margin-bottom: 24px; display: flex; align-items: center; gap: 10px; }
+        .card h2 .icon { width: 32px; height: 32px; background: var(--yellow); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; }
+        .type-selector { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 18px; }
+        .type-btn { padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; font-size: 13px; transition: all 0.2s; text-align: center; }
+        .type-btn.active { border-color: var(--yellow); color: var(--yellow); background: #1a1500; }
+        .form-group { margin-bottom: 18px; }
+        label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 8px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }
+        input, textarea, select { width: 100%; background: var(--black); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; color: var(--text); font-family: 'DM Sans', sans-serif; font-size: 14px; transition: border-color 0.2s; outline: none; }
+        input:focus, textarea:focus { border-color: var(--yellow); }
+        textarea { resize: vertical; min-height: 100px; }
 
-        body {
-            background: var(--black);
-            color: var(--text);
-            font-family: 'DM Sans', sans-serif;
-            min-height: 100vh;
-        }
-
-        header {
-            background: var(--dark);
-            border-bottom: 1px solid var(--border);
-            padding: 20px 40px;
-            display: flex;
-            align-items: center;
-            gap: 16px;
-        }
-
-        .logo {
-            width: 42px;
-            height: 42px;
-            background: var(--yellow);
+        .upload-area {
+            border: 2px dashed var(--border);
             border-radius: 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-family: 'Syne', sans-serif;
-            font-weight: 800;
-            color: var(--black);
-            font-size: 18px;
-        }
-
-        header h1 {
-            font-family: 'Syne', sans-serif;
-            font-weight: 700;
-            font-size: 20px;
-            color: var(--text);
-        }
-
-        header span {
-            color: var(--yellow);
-        }
-
-        .badge {
-            background: #1a2a1a;
-            color: #4caf50;
-            border: 1px solid #2a4a2a;
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 12px;
-            margin-left: auto;
-        }
-
-        .container {
-            max-width: 1100px;
-            margin: 0 auto;
-            padding: 40px 20px;
-        }
-
-        .grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 24px;
-        }
-
-        @media (max-width: 768px) {
-            .grid { grid-template-columns: 1fr; }
-            header { padding: 16px 20px; }
-        }
-
-        .card {
-            background: var(--card);
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            padding: 28px;
-        }
-
-        .card h2 {
-            font-family: 'Syne', sans-serif;
-            font-weight: 700;
-            font-size: 18px;
-            margin-bottom: 24px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .card h2 .icon {
-            width: 32px;
-            height: 32px;
-            background: var(--yellow);
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 16px;
-        }
-
-        .tabs {
-            display: flex;
-            gap: 8px;
-            margin-bottom: 24px;
-        }
-
-        .tab {
-            padding: 8px 20px;
-            border-radius: 8px;
-            border: 1px solid var(--border);
-            background: transparent;
-            color: var(--muted);
+            padding: 30px;
+            text-align: center;
             cursor: pointer;
-            font-family: 'DM Sans', sans-serif;
-            font-size: 14px;
             transition: all 0.2s;
-        }
-
-        .tab.active {
-            background: var(--yellow);
-            color: var(--black);
-            border-color: var(--yellow);
-            font-weight: 600;
-        }
-
-        .form-group {
             margin-bottom: 18px;
+            position: relative;
         }
+        .upload-area:hover { border-color: var(--yellow); background: #1a1500; }
+        .upload-area.dragover { border-color: var(--yellow); background: #1a1500; }
+        .upload-area input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+        .upload-icon { font-size: 36px; margin-bottom: 10px; }
+        .upload-text { font-size: 14px; color: var(--muted); }
+        .upload-text span { color: var(--yellow); font-weight: 600; }
 
-        label {
-            display: block;
-            font-size: 13px;
-            color: var(--muted);
-            margin-bottom: 8px;
-            font-weight: 500;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
+        .preview-box { background: var(--black); border: 1px solid var(--border); border-radius: 10px; padding: 16px; min-height: 120px; margin-bottom: 16px; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 13px; text-align: center; overflow: hidden; }
+        .preview-box img { max-width: 100%; max-height: 200px; border-radius: 8px; object-fit: cover; }
+        .preview-box video { max-width: 100%; max-height: 200px; border-radius: 8px; }
 
-        input, textarea, select {
-            width: 100%;
-            background: var(--black);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            padding: 12px 16px;
-            color: var(--text);
-            font-family: 'DM Sans', sans-serif;
-            font-size: 14px;
-            transition: border-color 0.2s;
-            outline: none;
-        }
+        .upload-progress { display: none; background: var(--black); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+        .progress-bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 8px; }
+        .progress-fill { height: 100%; background: var(--yellow); border-radius: 3px; transition: width 0.3s; width: 0%; }
+        .progress-text { font-size: 13px; color: var(--muted); }
 
-        input:focus, textarea:focus, select:focus {
-            border-color: var(--yellow);
-        }
-
-        textarea {
-            resize: vertical;
-            min-height: 100px;
-        }
-
-        select option {
-            background: var(--dark);
-        }
-
-        .btn {
-            width: 100%;
-            padding: 14px;
-            background: var(--yellow);
-            color: var(--black);
-            border: none;
-            border-radius: 10px;
-            font-family: 'Syne', sans-serif;
-            font-weight: 700;
-            font-size: 15px;
-            cursor: pointer;
-            transition: opacity 0.2s, transform 0.1s;
-            margin-top: 8px;
-        }
-
+        .btn { width: 100%; padding: 14px; background: var(--yellow); color: var(--black); border: none; border-radius: 10px; font-family: 'Syne', sans-serif; font-weight: 700; font-size: 15px; cursor: pointer; transition: opacity 0.2s, transform 0.1s; margin-top: 8px; }
         .btn:hover { opacity: 0.9; transform: translateY(-1px); }
         .btn:active { transform: translateY(0); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .btn-secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+        .btn-secondary:hover { border-color: var(--yellow); color: var(--yellow); }
 
-        .btn-secondary {
-            background: transparent;
-            border: 1px solid var(--border);
-            color: var(--text);
-        }
+        .alert { padding: 12px 16px; border-radius: 10px; font-size: 13px; margin-bottom: 16px; display: none; }
+        .alert-success { background: #0a1a0a; color: #4caf50; border: 1px solid #1a3a1a; }
+        .alert-error { background: #1a0a0a; color: #f44336; border: 1px solid #3a1a1a; }
 
-        .btn-secondary:hover {
-            border-color: var(--yellow);
-            color: var(--yellow);
-        }
+        .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
+        .stat { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; text-align: center; }
+        .stat-number { font-family: 'Syne', sans-serif; font-size: 28px; font-weight: 800; color: var(--yellow); }
+        .stat-label { font-size: 12px; color: var(--muted); margin-top: 4px; }
 
-        .preview-box {
-            background: var(--black);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            padding: 16px;
-            min-height: 120px;
-            margin-bottom: 16px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: var(--muted);
-            font-size: 13px;
-            text-align: center;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .preview-box img {
-            max-width: 100%;
-            max-height: 200px;
-            border-radius: 8px;
-            object-fit: cover;
-        }
-
-        .post-list {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-        }
-
-        .post-item {
-            background: var(--black);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            padding: 14px 16px;
-            display: flex;
-            align-items: center;
-            gap: 14px;
-        }
-
-        .post-thumb {
-            width: 48px;
-            height: 48px;
-            background: var(--border);
-            border-radius: 8px;
-            flex-shrink: 0;
-            overflow: hidden;
-        }
-
-        .post-thumb img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
-
-        .post-info {
-            flex: 1;
-            min-width: 0;
-        }
-
-        .post-caption {
-            font-size: 13px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            margin-bottom: 4px;
-        }
-
-        .post-time {
-            font-size: 11px;
-            color: var(--muted);
-        }
-
-        .post-status {
-            padding: 4px 10px;
-            border-radius: 6px;
-            font-size: 11px;
-            font-weight: 600;
-            flex-shrink: 0;
-        }
-
-        .status-pending {
-            background: #1a1a00;
-            color: var(--yellow);
-            border: 1px solid #333300;
-        }
-
-        .status-published {
-            background: #0a1a0a;
-            color: #4caf50;
-            border: 1px solid #1a3a1a;
-        }
-
-        .status-error {
-            background: #1a0a0a;
-            color: #f44336;
-            border: 1px solid #3a1a1a;
-        }
-
-        .delete-btn {
-            background: none;
-            border: none;
-            color: var(--muted);
-            cursor: pointer;
-            font-size: 16px;
-            padding: 4px;
-            transition: color 0.2s;
-        }
-
+        .post-list { display: flex; flex-direction: column; gap: 12px; }
+        .post-item { background: var(--black); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; display: flex; align-items: center; gap: 14px; }
+        .post-thumb { width: 48px; height: 48px; background: var(--border); border-radius: 8px; flex-shrink: 0; overflow: hidden; }
+        .post-thumb img { width: 100%; height: 100%; object-fit: cover; }
+        .post-info { flex: 1; min-width: 0; }
+        .post-caption { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px; }
+        .post-time { font-size: 11px; color: var(--muted); }
+        .post-status { padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; flex-shrink: 0; }
+        .status-pending { background: #1a1a00; color: var(--yellow); border: 1px solid #333300; }
+        .status-published { background: #0a1a0a; color: #4caf50; border: 1px solid #1a3a1a; }
+        .status-error { background: #1a0a0a; color: #f44336; border: 1px solid #3a1a1a; }
+        .delete-btn { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 16px; padding: 4px; transition: color 0.2s; }
         .delete-btn:hover { color: #f44336; }
+        .empty-state { text-align: center; padding: 40px 20px; color: var(--muted); }
+        .empty-state .emoji { font-size: 40px; margin-bottom: 12px; }
 
-        .alert {
-            padding: 12px 16px;
-            border-radius: 10px;
-            font-size: 13px;
-            margin-bottom: 16px;
-            display: none;
-        }
-
-        .alert-success {
-            background: #0a1a0a;
-            color: #4caf50;
-            border: 1px solid #1a3a1a;
-        }
-
-        .alert-error {
-            background: #1a0a0a;
-            color: #f44336;
-            border: 1px solid #3a1a1a;
-        }
-
-        .empty-state {
-            text-align: center;
-            padding: 40px 20px;
-            color: var(--muted);
-        }
-
-        .empty-state .emoji {
-            font-size: 40px;
-            margin-bottom: 12px;
-        }
-
-        .full-width {
-            grid-column: 1 / -1;
-        }
-
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 16px;
-            margin-bottom: 24px;
-        }
-
-        .stat {
-            background: var(--card);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 20px;
-            text-align: center;
-        }
-
-        .stat-number {
-            font-family: 'Syne', sans-serif;
-            font-size: 28px;
-            font-weight: 800;
-            color: var(--yellow);
-        }
-
-        .stat-label {
-            font-size: 12px;
-            color: var(--muted);
-            margin-top: 4px;
-        }
-
-        .type-selector {
-            display: grid;
-            grid-template-columns: 1fr 1fr 1fr;
-            gap: 8px;
-            margin-bottom: 18px;
-        }
-
-        .type-btn {
-            padding: 10px;
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            background: transparent;
-            color: var(--muted);
-            cursor: pointer;
-            font-size: 13px;
-            transition: all 0.2s;
-            text-align: center;
-        }
-
-        .type-btn.active {
-            border-color: var(--yellow);
-            color: var(--yellow);
-            background: #1a1500;
-        }
-
-        .loading {
-            opacity: 0.6;
-            pointer-events: none;
-        }
+        .file-info { background: #1a1500; border: 1px solid #333300; border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 13px; color: var(--yellow); display: none; }
     </style>
 </head>
 <body>
@@ -443,23 +140,12 @@ HTML_TEMPLATE = '''
 <div class="container">
 
     <div class="stats">
-        <div class="stat">
-            <div class="stat-number" id="stat-pending">0</div>
-            <div class="stat-label">Agendados</div>
-        </div>
-        <div class="stat">
-            <div class="stat-number" id="stat-published">0</div>
-            <div class="stat-label">Publicados</div>
-        </div>
-        <div class="stat">
-            <div class="stat-number" id="stat-total">0</div>
-            <div class="stat-label">Total</div>
-        </div>
+        <div class="stat"><div class="stat-number" id="stat-pending">0</div><div class="stat-label">Agendados</div></div>
+        <div class="stat"><div class="stat-number" id="stat-published">0</div><div class="stat-label">Publicados</div></div>
+        <div class="stat"><div class="stat-number" id="stat-total">0</div><div class="stat-label">Total</div></div>
     </div>
 
     <div class="grid">
-
-        <!-- FORMULÁRIO -->
         <div class="card">
             <h2><div class="icon">✏️</div> Novo Post</h2>
 
@@ -471,14 +157,24 @@ HTML_TEMPLATE = '''
                 <button class="type-btn" onclick="setType('stories', this)">⭕ Stories</button>
             </div>
 
-            <div class="form-group">
-                <label>URL da Imagem/Vídeo *</label>
-                <input type="url" id="media-url" placeholder="https://..." oninput="previewMedia(this.value)">
+            <!-- Upload Area -->
+            <div class="upload-area" id="upload-area">
+                <input type="file" id="file-input" accept="image/*,video/*" onchange="handleFileSelect(this)">
+                <div class="upload-icon">📁</div>
+                <div class="upload-text">
+                    <span>Clique para selecionar</span> ou arraste aqui<br>
+                    <small style="color:var(--muted);margin-top:6px;display:block">Fotos e vídeos • Qualidade original mantida</small>
+                </div>
             </div>
 
-            <div class="preview-box" id="preview">
-                <span>Prévia aparecerá aqui</span>
+            <div class="file-info" id="file-info">📎 <span id="file-name"></span></div>
+
+            <div class="upload-progress" id="upload-progress">
+                <div class="progress-text" id="progress-text">Enviando para a nuvem...</div>
+                <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
             </div>
+
+            <div class="preview-box" id="preview" style="display:none"></div>
 
             <div class="form-group" id="caption-group">
                 <label>Legenda</label>
@@ -486,52 +182,185 @@ HTML_TEMPLATE = '''
             </div>
 
             <div class="form-group">
-                <label>Agendar para</label>
+                <label>Agendar para (deixe vazio para publicar agora)</label>
                 <input type="datetime-local" id="schedule-time">
             </div>
 
-            <button class="btn" onclick="schedulePost()">⚡ Agendar Post</button>
-            <button class="btn btn-secondary" style="margin-top:10px" onclick="publishNow()">🚀 Publicar Agora</button>
+            <button class="btn" id="publish-btn" onclick="handlePublish()" disabled>⚡ Selecione uma mídia primeiro</button>
         </div>
 
-        <!-- LISTA -->
         <div class="card">
             <h2><div class="icon">📋</div> Posts Agendados</h2>
-
             <div id="posts-list" class="post-list">
-                <div class="empty-state">
-                    <div class="emoji">📭</div>
-                    <p>Nenhum post agendado ainda</p>
-                </div>
+                <div class="empty-state"><div class="emoji">📭</div><p>Nenhum post agendado ainda</p></div>
             </div>
         </div>
-
     </div>
 </div>
 
 <script>
     let postType = 'feed';
-    let posts = [];
+    let uploadedMediaUrl = null;
+    let selectedFile = null;
 
     function setType(type, btn) {
         postType = type;
         document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
-        // Stories não tem legenda
         document.getElementById('caption-group').style.display = type === 'stories' ? 'none' : 'block';
     }
 
-    function previewMedia(url) {
-        const box = document.getElementById('preview');
-        if (!url) {
-            box.innerHTML = '<span>Prévia aparecerá aqui</span>';
-            return;
+    function handleFileSelect(input) {
+        const file = input.files[0];
+        if (!file) return;
+        selectedFile = file;
+
+        document.getElementById('file-info').style.display = 'block';
+        document.getElementById('file-name').textContent = file.name + ' (' + (file.size / 1024 / 1024).toFixed(1) + ' MB)';
+
+        // Preview local
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const preview = document.getElementById('preview');
+            preview.style.display = 'flex';
+            if (file.type.startsWith('video/')) {
+                preview.innerHTML = `<video src="${e.target.result}" style="max-width:100%;max-height:200px;border-radius:8px" controls></video>`;
+            } else {
+                preview.innerHTML = `<img src="${e.target.result}" style="max-width:100%;max-height:200px;border-radius:8px;object-fit:cover">`;
+            }
+        };
+        reader.readAsDataURL(file);
+
+        // Upload para Cloudinary
+        uploadToCloudinary(file);
+    }
+
+    async function uploadToCloudinary(file) {
+        const btn = document.getElementById('publish-btn');
+        btn.disabled = true;
+        btn.textContent = '⏳ Enviando mídia...';
+
+        const progress = document.getElementById('upload-progress');
+        const progressFill = document.getElementById('progress-fill');
+        const progressText = document.getElementById('progress-text');
+        progress.style.display = 'block';
+
+        // Animação de progresso
+        let pct = 0;
+        const interval = setInterval(() => {
+            pct = Math.min(pct + 5, 85);
+            progressFill.style.width = pct + '%';
+        }, 200);
+
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            const res = await fetch('/upload', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await res.json();
+
+            clearInterval(interval);
+
+            if (data.success) {
+                uploadedMediaUrl = data.url;
+                progressFill.style.width = '100%';
+                progressText.textContent = '✅ Mídia enviada com sucesso!';
+                progressText.style.color = '#4caf50';
+
+                btn.disabled = false;
+                btn.textContent = '🚀 Publicar no Instagram';
+
+                setTimeout(() => { progress.style.display = 'none'; }, 2000);
+            } else {
+                clearInterval(interval);
+                progressText.textContent = '❌ Erro no upload: ' + data.error;
+                progressText.style.color = '#f44336';
+                btn.textContent = '⚡ Selecione uma mídia primeiro';
+            }
+        } catch(e) {
+            clearInterval(interval);
+            progressText.textContent = '❌ Erro de conexão!';
+            progressText.style.color = '#f44336';
         }
-        if (url.match(/\.(mp4|mov|avi)$/i)) {
-            box.innerHTML = `<video src="${url}" style="max-width:100%;max-height:200px;border-radius:8px" controls></video>`;
+    }
+
+    async function handlePublish() {
+        if (!uploadedMediaUrl) return showAlert('Selecione uma mídia primeiro!', 'error');
+
+        const caption = document.getElementById('caption').value;
+        const scheduleTime = document.getElementById('schedule-time').value;
+        const btn = document.getElementById('publish-btn');
+
+        btn.disabled = true;
+
+        if (scheduleTime) {
+            // Agendar
+            btn.textContent = '⏳ Agendando...';
+            try {
+                const res = await fetch('/schedule', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        media_url: uploadedMediaUrl,
+                        caption: caption,
+                        schedule_time: scheduleTime,
+                        post_type: postType
+                    })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showAlert('✅ Post agendado com sucesso!', 'success');
+                    resetForm();
+                    loadPosts();
+                } else {
+                    showAlert('Erro: ' + data.error, 'error');
+                }
+            } catch(e) {
+                showAlert('Erro de conexão!', 'error');
+            }
         } else {
-            box.innerHTML = `<img src="${url}" onerror="this.parentElement.innerHTML='<span>URL inválida ou imagem não carregou</span>'">`;
+            // Publicar agora
+            btn.textContent = '⏳ Publicando...';
+            try {
+                const res = await fetch('/publish-now', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        media_url: uploadedMediaUrl,
+                        caption: caption,
+                        post_type: postType
+                    })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showAlert('🎉 Publicado com sucesso no Instagram!', 'success');
+                    resetForm();
+                    loadPosts();
+                } else {
+                    showAlert('Erro: ' + data.error, 'error');
+                }
+            } catch(e) {
+                showAlert('Erro de conexão!', 'error');
+            }
         }
+
+        btn.disabled = false;
+        btn.textContent = '🚀 Publicar no Instagram';
+    }
+
+    function resetForm() {
+        uploadedMediaUrl = null;
+        selectedFile = null;
+        document.getElementById('file-input').value = '';
+        document.getElementById('caption').value = '';
+        document.getElementById('schedule-time').value = '';
+        document.getElementById('preview').style.display = 'none';
+        document.getElementById('file-info').style.display = 'none';
+        document.getElementById('publish-btn').disabled = true;
+        document.getElementById('publish-btn').textContent = '⚡ Selecione uma mídia primeiro';
     }
 
     function showAlert(msg, type) {
@@ -542,86 +371,6 @@ HTML_TEMPLATE = '''
         setTimeout(() => el.style.display = 'none', 5000);
     }
 
-    async function schedulePost() {
-        const url = document.getElementById('media-url').value;
-        const caption = document.getElementById('caption').value;
-        const scheduleTime = document.getElementById('schedule-time').value;
-
-        if (!url) return showAlert('Insira a URL da mídia!', 'error');
-        if (!scheduleTime) return showAlert('Escolha o horário de agendamento!', 'error');
-
-        const btn = document.querySelector('.btn');
-        btn.classList.add('loading');
-        btn.textContent = 'Agendando...';
-
-        try {
-            const res = await fetch('/schedule', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    media_url: url,
-                    caption: caption,
-                    schedule_time: scheduleTime,
-                    post_type: postType
-                })
-            });
-            const data = await res.json();
-            if (data.success) {
-                showAlert('✅ Post agendado com sucesso!', 'success');
-                document.getElementById('media-url').value = '';
-                document.getElementById('caption').value = '';
-                document.getElementById('schedule-time').value = '';
-                document.getElementById('preview').innerHTML = '<span>Prévia aparecerá aqui</span>';
-                loadPosts();
-            } else {
-                showAlert('Erro: ' + data.error, 'error');
-            }
-        } catch(e) {
-            showAlert('Erro de conexão!', 'error');
-        }
-
-        btn.classList.remove('loading');
-        btn.textContent = '⚡ Agendar Post';
-    }
-
-    async function publishNow() {
-        const url = document.getElementById('media-url').value;
-        const caption = document.getElementById('caption').value;
-
-        if (!url) return showAlert('Insira a URL da mídia!', 'error');
-
-        const btn = document.querySelectorAll('.btn')[1];
-        btn.classList.add('loading');
-        btn.textContent = 'Publicando...';
-
-        try {
-            const res = await fetch('/publish-now', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    media_url: url,
-                    caption: caption,
-                    post_type: postType
-                })
-            });
-            const data = await res.json();
-            if (data.success) {
-                showAlert('🎉 Post publicado com sucesso no Instagram!', 'success');
-                document.getElementById('media-url').value = '';
-                document.getElementById('caption').value = '';
-                document.getElementById('preview').innerHTML = '<span>Prévia aparecerá aqui</span>';
-                loadPosts();
-            } else {
-                showAlert('Erro: ' + data.error, 'error');
-            }
-        } catch(e) {
-            showAlert('Erro de conexão!', 'error');
-        }
-
-        btn.classList.remove('loading');
-        btn.textContent = '🚀 Publicar Agora';
-    }
-
     async function deletePost(id) {
         await fetch(`/delete/${id}`, {method: 'DELETE'});
         loadPosts();
@@ -629,13 +378,10 @@ HTML_TEMPLATE = '''
 
     async function loadPosts() {
         const res = await fetch('/posts');
-        posts = await res.json();
+        const posts = await res.json();
 
-        const pending = posts.filter(p => p.status === 'pending').length;
-        const published = posts.filter(p => p.status === 'published').length;
-
-        document.getElementById('stat-pending').textContent = pending;
-        document.getElementById('stat-published').textContent = published;
+        document.getElementById('stat-pending').textContent = posts.filter(p => p.status === 'pending').length;
+        document.getElementById('stat-published').textContent = posts.filter(p => p.status === 'published').length;
         document.getElementById('stat-total').textContent = posts.length;
 
         const list = document.getElementById('posts-list');
@@ -651,7 +397,7 @@ HTML_TEMPLATE = '''
                 </div>
                 <div class="post-info">
                     <div class="post-caption">${p.caption || '(sem legenda)'}</div>
-                    <div class="post-time">${p.post_type.toUpperCase()} · ${p.schedule_time || 'Imediato'}</div>
+                    <div class="post-time">${p.post_type.toUpperCase()} · ${p.schedule_time || 'Publicado agora'}</div>
                 </div>
                 <span class="post-status status-${p.status}">
                     ${p.status === 'pending' ? '⏳ Agendado' : p.status === 'published' ? '✅ Publicado' : '❌ Erro'}
@@ -661,15 +407,26 @@ HTML_TEMPLATE = '''
         `).join('');
     }
 
-    // Definir horário padrão (agora + 1h)
-    const now = new Date();
-    now.setHours(now.getHours() + 1);
-    document.getElementById('schedule-time').value = now.toISOString().slice(0, 16);
+    // Drag and drop
+    const uploadArea = document.getElementById('upload-area');
+    uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.classList.add('dragover'); });
+    uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
+    uploadArea.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove('dragover');
+        const file = e.dataTransfer.files[0];
+        if (file) {
+            const input = document.getElementById('file-input');
+            const dt = new DataTransfer();
+            dt.items.add(file);
+            input.files = dt.files;
+            handleFileSelect(input);
+        }
+    });
 
     loadPosts();
     setInterval(loadPosts, 30000);
 </script>
-
 </body>
 </html>
 '''
@@ -677,6 +434,37 @@ HTML_TEMPLATE = '''
 @app.route('/')
 def index():
     return render_template_string(HTML_TEMPLATE)
+
+@app.route('/upload', methods=['POST'])
+def upload_file():
+    try:
+        if 'file' not in request.files:
+            return jsonify({'success': False, 'error': 'Nenhum arquivo enviado'})
+
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'success': False, 'error': 'Arquivo inválido'})
+
+        # Verificar se é vídeo ou imagem
+        is_video = file.content_type.startswith('video/')
+        resource_type = 'video' if is_video else 'image'
+
+        # Upload para Cloudinary com qualidade original
+        result = cloudinary.uploader.upload(
+            file,
+            resource_type=resource_type,
+            quality='auto:best',
+            folder='critech'
+        )
+
+        return jsonify({
+            'success': True,
+            'url': result['secure_url'],
+            'public_id': result['public_id']
+        })
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/posts', methods=['GET'])
 def get_posts():
@@ -732,41 +520,17 @@ def publish_to_instagram(media_url, caption, post_type):
         if not token:
             return {'success': False, 'error': 'Token de acesso não configurado'}
 
-        # Criar container de mídia
         if post_type == 'reels':
-            container_data = {
-                'media_type': 'REELS',
-                'video_url': media_url,
-                'caption': caption,
-                'access_token': token
-            }
+            container_data = {'media_type': 'REELS', 'video_url': media_url, 'caption': caption, 'access_token': token}
         elif post_type == 'stories':
-            # Verificar se é vídeo ou imagem
             if media_url.lower().endswith(('.mp4', '.mov')):
-                container_data = {
-                    'media_type': 'VIDEO',
-                    'video_url': media_url,
-                    'is_stories': True,
-                    'access_token': token
-                }
+                container_data = {'media_type': 'VIDEO', 'video_url': media_url, 'is_stories': True, 'access_token': token}
             else:
-                container_data = {
-                    'image_url': media_url,
-                    'is_stories': True,
-                    'access_token': token
-                }
+                container_data = {'image_url': media_url, 'is_stories': True, 'access_token': token}
         else:
-            container_data = {
-                'image_url': media_url,
-                'caption': caption,
-                'access_token': token
-            }
+            container_data = {'image_url': media_url, 'caption': caption, 'access_token': token}
 
-        # Step 1: criar container
-        container_res = requests.post(
-            f'https://graph.instagram.com/v21.0/{user_id}/media',
-            data=container_data
-        )
+        container_res = requests.post(f'https://graph.instagram.com/v21.0/{user_id}/media', data=container_data)
         container_json = container_res.json()
 
         if 'id' not in container_json:
@@ -774,17 +538,12 @@ def publish_to_instagram(media_url, caption, post_type):
 
         container_id = container_json['id']
 
-        # Para vídeos, aguardar processamento
         if post_type in ['reels'] or media_url.lower().endswith(('.mp4', '.mov')):
-            time.sleep(10)
+            time.sleep(15)
 
-        # Step 2: publicar
         publish_res = requests.post(
             f'https://graph.instagram.com/v21.0/{user_id}/media_publish',
-            data={
-                'creation_id': container_id,
-                'access_token': token
-            }
+            data={'creation_id': container_id, 'access_token': token}
         )
         publish_json = publish_res.json()
 
@@ -803,11 +562,7 @@ def check_scheduled_posts():
             try:
                 scheduled_time = datetime.fromisoformat(post['schedule_time'])
                 if now >= scheduled_time:
-                    result = publish_to_instagram(
-                        post['media_url'],
-                        post['caption'],
-                        post['post_type']
-                    )
+                    result = publish_to_instagram(post['media_url'], post['caption'], post['post_type'])
                     post['status'] = 'published' if result['success'] else 'error'
             except:
                 pass
@@ -818,7 +573,6 @@ def run_scheduler():
         schedule.run_pending()
         time.sleep(30)
 
-# Iniciar scheduler em background
 scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
 scheduler_thread.start()
 
