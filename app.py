@@ -407,8 +407,24 @@ def publish_to_instagram(media_url, caption, post_type):
 
         container_id = container_json['id']
 
-        if is_video or post_type == 'reels':
-            time.sleep(15)
+        # Aguardar mídia ficar pronta (polling)
+        max_attempts = 15
+        wait_seconds = 4
+        for attempt in range(max_attempts):
+            time.sleep(wait_seconds)
+            status_res = requests.get(
+                f'https://graph.instagram.com/v21.0/{container_id}',
+                params={'fields': 'status_code,status', 'access_token': token},
+                timeout=30
+            )
+            status_json = status_res.json()
+            status_code = status_json.get('status_code', '')
+
+            if status_code == 'FINISHED':
+                break
+            elif status_code in ['ERROR', 'EXPIRED']:
+                return {'success': False, 'error': f'Erro no processamento da midia: {status_json.get("status", status_code)}'}
+            # Se IN_PROGRESS continua aguardando
 
         publish_res = requests.post(
             f'https://graph.instagram.com/v21.0/{user_id}/media_publish',
