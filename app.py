@@ -315,12 +315,21 @@ def upload_file():
             return jsonify({'success': False, 'error': 'Nenhum arquivo enviado'})
         file = request.files['file']
         resource_type = 'video' if file.content_type.startswith('video/') else 'image'
-        result = cloudinary.uploader.upload(
-            file,
-            resource_type=resource_type,
-            quality='auto:best',
-            folder='critech-scheduler'
-        )
+        if resource_type == 'video':
+            result = cloudinary.uploader.upload(
+                file,
+                resource_type='video',
+                folder='critech-scheduler',
+                chunk_size=6000000,
+                eager_async=True
+            )
+        else:
+            result = cloudinary.uploader.upload(
+                file,
+                resource_type='image',
+                quality='auto:best',
+                folder='critech-scheduler'
+            )
         return jsonify({'success': True, 'url': result['secure_url']})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
