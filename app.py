@@ -253,18 +253,15 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         isVideo = file.type.startsWith("video/");
         thumbDataUrl = "";
 
-        const reader = new FileReader();
-        reader.onload = async (e) => {
-            const preview = document.getElementById("preview");
-            if (isVideo) {
-                preview.innerHTML = "<video src=\"" + e.target.result + "\" style=\"max-width:100%;max-height:200px;border-radius:8px\" controls></video>";
-                thumbDataUrl = await captureVideoThumb(e.target.result);
-            } else {
-                preview.innerHTML = "<img src=\"" + e.target.result + "\" style=\"max-width:100%;max-height:200px;border-radius:8px;object-fit:cover\">";
-                thumbDataUrl = e.target.result;
-            }
-        };
-        reader.readAsDataURL(file);
+        const objectUrl = URL.createObjectURL(file);
+        const preview = document.getElementById("preview");
+        if (isVideo) {
+            preview.innerHTML = "<video src=\"" + objectUrl + "\" style=\"max-width:100%;max-height:200px;border-radius:8px\" controls></video>";
+            try { thumbDataUrl = await captureVideoThumb(objectUrl); } catch(e) { thumbDataUrl = ""; }
+        } else {
+            preview.innerHTML = "<img src=\"" + objectUrl + "\" style=\"max-width:100%;max-height:200px;border-radius:8px;object-fit:cover\">";
+            thumbDataUrl = objectUrl;
+        }
 
         const progress = document.getElementById("upload-progress");
         const progressFill = document.getElementById("progress-fill");
