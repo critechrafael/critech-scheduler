@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, render_template_string
 import requests
 import os
+import sqlite3
 from datetime import datetime, timedelta
 import threading
 import time
@@ -22,7 +23,61 @@ cloudinary.config(
     api_secret=CLOUDINARY_API_SECRET
 )
 
-scheduled_posts = []
+DB_FILE = '/tmp/critech.db'
+
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    conn.execute('''CREATE TABLE IF NOT EXISTS posts (
+        id INTEGER PRIMARY KEY,
+        media_url TEXT,
+        caption TEXT,
+        schedule_time TEXT,
+        post_type TEXT,
+        is_video INTEGER DEFAULT 0,
+        status TEXT DEFAULT "pending",
+        error_msg TEXT,
+        created_at TEXT
+    )''')
+    conn.commit()
+    conn.close()
+
+def db_save_post(post):
+    conn = sqlite3.connect(DB_FILE)
+    conn.execute(
+        'INSERT OR REPLACE INTO posts (id, media_url, caption, schedule_time, post_type, is_video, status, error_msg, created_at) VALUES (?,?,?,?,?,?,?,?,?)',
+        (post['id'], post['media_url'], post['caption'], post['schedule_time'],
+         post['post_type'], 1 if post.get('is_video') else 0,
+         post['status'], post.get('error_msg'), post['created_at'])
+    )
+    conn.commit()
+    conn.close()
+
+def db_update_post(post_id, status, error_msg=None):
+    conn = sqlite3.connect(DB_FILE)
+    conn.execute('UPDATE posts SET status=?, error_msg=? WHERE id=?', (status, error_msg, post_id))
+    conn.commit()
+    conn.close()
+
+def db_delete_post(post_id):
+    conn = sqlite3.connect(DB_FILE)
+    conn.execute('DELETE FROM posts WHERE id=?', (post_id,))
+    conn.commit()
+    conn.close()
+
+def db_load_posts():
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute('SELECT * FROM posts ORDER BY created_at ASC').fetchall()
+    conn.close()
+    return [{
+        'id': r['id'], 'media_url': r['media_url'], 'caption': r['caption'],
+        'schedule_time': r['schedule_time'], 'post_type': r['post_type'],
+        'is_video': bool(r['is_video']), 'status': r['status'],
+        'error_msg': r['error_msg'], 'created_at': r['created_at']
+    } for r in rows]
+
+init_db()
+scheduled_posts = db_load_posts()
 
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
@@ -687,6 +742,7 @@ def schedule_post():
         'created_at': datetime.now().isoformat()
     }
     scheduled_posts.append(post)
+    db_save_post(post)
     return jsonify({'success': True, 'post': post})
 
 @app.route('/publish-now', methods=['POST'])
@@ -705,6 +761,7 @@ def publish_now():
         'created_at': datetime.now().isoformat()
     }
     scheduled_posts.append(post)
+    db_save_post(post)
     return jsonify(result)
 
 @app.route('/delete/<int:post_id>', methods=['DELETE'])
@@ -788,6 +845,7 @@ def check_scheduled_posts():
                     result = publish_to_instagram(post['media_url'], post['caption'], post['post_type'])
                     post['status'] = 'published' if result['success'] else 'error'
                     post['error_msg'] = result.get('error') if not result['success'] else None
+                    db_update_post(post['id'], post['status'], post['error_msg'])
                     published_this_run = True
             except Exception as e:
                 post['status'] = 'error'
