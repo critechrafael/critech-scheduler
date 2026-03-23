@@ -1,8 +1,6 @@
 from flask import Flask, request, jsonify, render_template_string
 import requests
 import os
-import sqlite3
-import json
 from datetime import datetime, timedelta
 import threading
 import time
@@ -17,7 +15,6 @@ INSTAGRAM_USER_ID = os.environ.get('INSTAGRAM_USER_ID', '17841459866694291')
 CLOUDINARY_CLOUD_NAME = os.environ.get('CLOUDINARY_CLOUD_NAME', '')
 CLOUDINARY_API_KEY = os.environ.get('CLOUDINARY_API_KEY', '')
 CLOUDINARY_API_SECRET = os.environ.get('CLOUDINARY_API_SECRET', '')
-DB_FILE = '/tmp/critech.db'
 
 cloudinary.config(
     cloud_name=CLOUDINARY_CLOUD_NAME,
@@ -25,29 +22,7 @@ cloudinary.config(
     api_secret=CLOUDINARY_API_SECRET
 )
 
-def get_db():
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-def init_db():
-    conn = get_db()
-    conn.execute('''CREATE TABLE IF NOT EXISTS posts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        media_url TEXT,
-        thumb_url TEXT,
-        caption TEXT,
-        schedule_time TEXT,
-        post_type TEXT,
-        is_video INTEGER DEFAULT 0,
-        status TEXT DEFAULT "pending",
-        error_msg TEXT,
-        created_at TEXT
-    )''')
-    conn.commit()
-    conn.close()
-
-init_db()
+scheduled_posts = []
 
 HTML_TEMPLATE = '''<!DOCTYPE html>
 <html lang="pt-BR">
@@ -109,9 +84,8 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         .stat-label { font-size: 12px; color: var(--muted); margin-top: 4px; }
         .post-list { display: flex; flex-direction: column; gap: 12px; max-height: 600px; overflow-y: auto; }
         .post-item { background: var(--black); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; display: flex; align-items: flex-start; gap: 14px; }
-        .post-thumb { width: 52px; height: 52px; background: var(--border); border-radius: 8px; flex-shrink: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; font-size: 22px; position: relative; }
+        .post-thumb { width: 52px; height: 52px; background: var(--border); border-radius: 8px; flex-shrink: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; font-size: 22px; }
         .post-thumb img { width: 100%; height: 100%; object-fit: cover; }
-        .video-badge { position: absolute; bottom: 2px; right: 2px; background: rgba(0,0,0,0.7); border-radius: 3px; padding: 1px 3px; font-size: 8px; color: white; }
         .post-info { flex: 1; min-width: 0; }
         .post-caption { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px; }
         .post-time { font-size: 11px; color: var(--muted); }
@@ -124,7 +98,6 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         .delete-btn:hover { color: #f44336; }
         .empty-state { text-align: center; padding: 40px 20px; color: var(--muted); }
         .empty-state .emoji { font-size: 40px; margin-bottom: 12px; }
-        canvas { display: none; }
     </style>
 </head>
 <body>
@@ -133,7 +106,6 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     <h1>CriTech <span>Scheduler</span></h1>
     <div class="badge">&#9679; Instagram Conectado</div>
 </header>
-<canvas id="thumb-canvas" width="120" height="120"></canvas>
 <div class="container">
     <div class="stats">
         <div class="stat"><div class="stat-number" id="stat-pending">0</div><div class="stat-label">Agendados</div></div>
@@ -185,26 +157,25 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     </div>
 </div>
 <script>
-    let postType = "feed";
-    let uploadedUrl = "";
-    let thumbDataUrl = "";
-    let isVideo = false;
+    var postType = "feed";
+    var uploadedUrl = "";
+    var isVideo = false;
 
-    const EMOJIS = ["😀","😂","😍","🔥","👏","💪","✅","⭐","💛","🖤","❤️","💚","🎉","🚀","💎","🏆","👑","🎯","💯","🙌","👍","✨","💥","🌟","😎","🤩","😱","🥳","💰","🛒","📦","🚚","⌚","📱","🎁","💝","💻","🔋","⚡","🌍","🇧🇷","👀","🤝","💬","❗","❓","🏋️","🏃","😴","🎬","📸","⭕","🆕","🔴","🟡","🟢","🔵","⚫","⚪","🎵","🎶","🌈","🌙","☀️","❄️","🍀","🌺"];
+    var EMOJIS = ["😀","😂","😍","🔥","👏","💪","✅","⭐","💛","🖤","❤️","💚","🎉","🚀","💎","🏆","👑","🎯","💯","🙌","👍","✨","💥","🌟","😎","🤩","😱","🥳","💰","🛒","📦","🚚","⌚","📱","🎁","💝","💻","🔋","⚡","🌍","🇧🇷","👀","🤝","💬","❗","❓","🏋️","🏃","😴","🎬","📸","🆕","🔴","🟡","🟢","🎵","🌈","🌙","☀️","🍀"];
 
-    (function buildEmojis() {
-        const picker = document.getElementById("emoji-picker");
-        EMOJIS.forEach(e => {
-            const span = document.createElement("span");
+    (function() {
+        var picker = document.getElementById("emoji-picker");
+        EMOJIS.forEach(function(e) {
+            var span = document.createElement("span");
             span.textContent = e;
-            span.onclick = () => addEmoji(e);
+            span.onclick = function() { addEmoji(e); };
             picker.appendChild(span);
         });
     })();
 
     function setType(type, btn) {
         postType = type;
-        document.querySelectorAll(".type-btn").forEach(b => b.classList.remove("active"));
+        document.querySelectorAll(".type-btn").forEach(function(b) { b.classList.remove("active"); });
         btn.classList.add("active");
         document.getElementById("caption-group").style.display = type === "stories" ? "none" : "block";
     }
@@ -215,122 +186,110 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     }
 
     function addEmoji(emoji) {
-        const ta = document.getElementById("caption");
-        const s = ta.selectionStart, end = ta.selectionEnd;
+        var ta = document.getElementById("caption");
+        var s = ta.selectionStart;
+        var end = ta.selectionEnd;
         ta.value = ta.value.substring(0, s) + emoji + ta.value.substring(end);
         ta.selectionStart = ta.selectionEnd = s + emoji.length;
         ta.focus();
     }
 
-    document.addEventListener("click", () => document.getElementById("emoji-picker").classList.remove("open"));
+    document.addEventListener("click", function() {
+        document.getElementById("emoji-picker").classList.remove("open");
+    });
 
-    function captureVideoThumb(videoSrc) {
-        return new Promise((resolve) => {
-            const video = document.createElement("video");
-            video.crossOrigin = "anonymous";
-            video.src = videoSrc;
-            video.muted = true;
-            video.currentTime = 0.5;
-            video.onloadeddata = () => {
-                const canvas = document.getElementById("thumb-canvas");
-                const ctx = canvas.getContext("2d");
-                canvas.width = 120;
-                canvas.height = 120;
-                const vw = video.videoWidth, vh = video.videoHeight;
-                const size = Math.min(vw, vh);
-                const sx = (vw - size) / 2, sy = (vh - size) / 2;
-                ctx.drawImage(video, sx, sy, size, size, 0, 0, 120, 120);
-                resolve(canvas.toDataURL("image/jpeg", 0.8));
-            };
-            video.onerror = () => resolve("");
-            video.load();
-        });
-    }
-
-    async function handleFileSelect(input) {
-        const file = input.files[0];
+    function handleFileSelect(input) {
+        var file = input.files[0];
         if (!file) return;
         isVideo = file.type.startsWith("video/");
-        thumbDataUrl = "";
 
-        const objectUrl = URL.createObjectURL(file);
-        const preview = document.getElementById("preview");
-        if (isVideo) {
-            preview.innerHTML = "<video src=\"" + objectUrl + "\" style=\"max-width:100%;max-height:200px;border-radius:8px\" controls></video>";
-            try { thumbDataUrl = await captureVideoThumb(objectUrl); } catch(e) { thumbDataUrl = ""; }
-        } else {
-            preview.innerHTML = "<img src=\"" + objectUrl + "\" style=\"max-width:100%;max-height:200px;border-radius:8px;object-fit:cover\">";
-            thumbDataUrl = objectUrl;
-        }
+        var reader = new FileReader();
+        reader.onload = function(e) {
+            var preview = document.getElementById("preview");
+            if (isVideo) {
+                preview.innerHTML = '<video src="' + e.target.result + '" style="max-width:100%;max-height:200px;border-radius:8px" controls></video>';
+            } else {
+                preview.innerHTML = '<img src="' + e.target.result + '" style="max-width:100%;max-height:200px;border-radius:8px;object-fit:cover">';
+            }
+        };
+        reader.readAsDataURL(file);
 
-        const progress = document.getElementById("upload-progress");
-        const progressFill = document.getElementById("progress-fill");
-        const uploadStatus = document.getElementById("upload-status");
+        var progress = document.getElementById("upload-progress");
+        var progressFill = document.getElementById("progress-fill");
+        var uploadStatus = document.getElementById("upload-status");
         progress.style.display = "block";
         progressFill.style.background = "var(--yellow)";
-        uploadStatus.textContent = isVideo ? "Enviando video... pode demorar um pouco" : "Enviando imagem...";
-        let p = 0;
-        const interval = setInterval(() => { p += 2; if (p <= 85) progressFill.style.width = p + "%"; }, 300);
-        const formData = new FormData();
+        progressFill.style.width = "0%";
+        uploadStatus.textContent = isVideo ? "Enviando video... pode demorar" : "Enviando imagem...";
+
+        var p = 0;
+        var interval = setInterval(function() {
+            p += 2;
+            if (p <= 85) progressFill.style.width = p + "%";
+        }, 300);
+
+        var formData = new FormData();
         formData.append("file", file);
-        try {
-            const res = await fetch("/upload", { method: "POST", body: formData });
-            const data = await res.json();
-            clearInterval(interval);
-            if (data.success) {
-                uploadedUrl = data.url;
-                progressFill.style.width = "100%";
-                uploadStatus.textContent = "Pronto para publicar!";
-            } else {
-                uploadStatus.textContent = "Erro: " + data.error;
-                progressFill.style.background = "#f44336";
-            }
-        } catch(e) {
-            clearInterval(interval);
-            uploadStatus.textContent = "Erro de conexao!";
-        }
+
+        fetch("/upload", { method: "POST", body: formData })
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                clearInterval(interval);
+                if (data.success) {
+                    uploadedUrl = data.url;
+                    progressFill.style.width = "100%";
+                    uploadStatus.textContent = "Pronto para publicar!";
+                } else {
+                    uploadStatus.textContent = "Erro: " + data.error;
+                    progressFill.style.background = "#f44336";
+                }
+            })
+            .catch(function() {
+                clearInterval(interval);
+                uploadStatus.textContent = "Erro de conexao!";
+            });
     }
 
     function showAlert(msg, type) {
-        const el = document.getElementById("alert");
+        var el = document.getElementById("alert");
         el.textContent = msg;
         el.className = "alert alert-" + type;
         el.style.display = "block";
-        setTimeout(() => el.style.display = "none", 10000);
+        setTimeout(function() { el.style.display = "none"; }, 10000);
     }
 
-    async function handlePost() {
-        if (!uploadedUrl) return showAlert("Faca o upload de uma imagem ou video primeiro!", "error");
-        const scheduleTime = document.getElementById("schedule-time").value;
-        const caption = document.getElementById("caption").value;
-        const btn = document.getElementById("btn-publish");
+    function handlePost() {
+        if (!uploadedUrl) { showAlert("Faca o upload primeiro!", "error"); return; }
+        var scheduleTime = document.getElementById("schedule-time").value;
+        var caption = document.getElementById("caption").value;
+        var btn = document.getElementById("btn-publish");
         btn.disabled = true;
 
-        const payload = { media_url: uploadedUrl, thumb_url: thumbDataUrl, caption, schedule_time: scheduleTime || null, post_type: postType, is_video: isVideo };
+        var payload = JSON.stringify({ media_url: uploadedUrl, caption: caption, schedule_time: scheduleTime || null, post_type: postType, is_video: isVideo });
 
         if (scheduleTime) {
             btn.textContent = "Agendando...";
-            try {
-                const res = await fetch("/schedule", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload) });
-                const data = await res.json();
-                if (data.success) { showAlert("Post agendado com sucesso!", "success"); resetForm(); loadPosts(); }
-                else showAlert("Erro: " + data.error, "error");
-            } catch(e) { showAlert("Erro de conexao!", "error"); }
+            fetch("/schedule", { method: "POST", headers: {"Content-Type": "application/json"}, body: payload })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.success) { showAlert("Post agendado com sucesso!", "success"); resetForm(); loadPosts(); }
+                    else showAlert("Erro: " + data.error, "error");
+                    btn.disabled = false; btn.textContent = "Publicar no Instagram";
+                });
         } else {
             btn.textContent = "Publicando...";
-            try {
-                const res = await fetch("/publish-now", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload) });
-                const data = await res.json();
-                if (data.success) { showAlert("Publicado com sucesso no Instagram!", "success"); resetForm(); loadPosts(); }
-                else showAlert("Erro Instagram: " + data.error, "error");
-            } catch(e) { showAlert("Erro de conexao!", "error"); }
+            fetch("/publish-now", { method: "POST", headers: {"Content-Type": "application/json"}, body: payload })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data.success) { showAlert("Publicado com sucesso!", "success"); resetForm(); loadPosts(); }
+                    else showAlert("Erro: " + data.error, "error");
+                    btn.disabled = false; btn.textContent = "Publicar no Instagram";
+                });
         }
-        btn.disabled = false;
-        btn.textContent = "Publicar no Instagram";
     }
 
     function resetForm() {
-        uploadedUrl = ""; thumbDataUrl = ""; isVideo = false;
+        uploadedUrl = ""; isVideo = false;
         document.getElementById("caption").value = "";
         document.getElementById("preview").innerHTML = "<span>Previa aparecera aqui</span>";
         document.getElementById("upload-progress").style.display = "none";
@@ -338,46 +297,41 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         document.getElementById("schedule-time").value = "";
     }
 
-    async function deletePost(id) {
-        await fetch("/delete/" + id, { method: "DELETE" });
-        loadPosts();
+    function deletePost(id) {
+        fetch("/delete/" + id, { method: "DELETE" }).then(function() { loadPosts(); });
     }
 
-    function getThumb(post) {
-        if (post.thumb_url) {
-            return "<div class=\"post-thumb\"><img src=\"" + post.thumb_url + "\" onerror=\"this.parentElement.innerHTML='&#128247;'\">" + (post.is_video ? "<div class=\"video-badge\">VIDEO</div>" : "") + "</div>";
-        }
-        return "<div class=\"post-thumb\">" + (post.is_video ? "&#127908;" : "&#128247;") + "</div>";
+    function loadPosts() {
+        fetch("/posts")
+            .then(function(r) { return r.json(); })
+            .then(function(posts) {
+                document.getElementById("stat-pending").textContent = posts.filter(function(p) { return p.status === "pending"; }).length;
+                document.getElementById("stat-published").textContent = posts.filter(function(p) { return p.status === "published"; }).length;
+                document.getElementById("stat-total").textContent = posts.length;
+                var list = document.getElementById("posts-list");
+                if (!posts.length) { list.innerHTML = "<div class='empty-state'><div class='emoji'>&#128237;</div><p>Nenhum post ainda</p></div>"; return; }
+                list.innerHTML = posts.slice().reverse().map(function(p) {
+                    var thumb = p.is_video
+                        ? "<div class='post-thumb' style='background:#1a1a2a;flex-direction:column;gap:2px'><span style='font-size:20px'>&#127908;</span><span style='font-size:8px;color:var(--muted)'>" + p.post_type.toUpperCase() + "</span></div>"
+                        : "<div class='post-thumb'>" + (p.media_url ? "<img src='" + p.media_url + "' onerror=\"this.parentElement.innerHTML='&#128247;'\">" : "&#128247;") + "</div>";
+                    var statusIcon = p.status === "pending" ? "&#9203;" : p.status === "published" ? "&#9989;" : "&#10060;";
+                    return "<div class='post-item'>" + thumb +
+                        "<div class='post-info'><div class='post-caption'>" + (p.caption || "(sem legenda)") + "</div>" +
+                        "<div class='post-time'>" + p.post_type.toUpperCase() + " &middot; " + (p.schedule_time ? p.schedule_time.replace("T"," ") : "Imediato") + "</div>" +
+                        (p.error_msg ? "<div class='post-error'>" + p.error_msg + "</div>" : "") +
+                        "</div><span class='post-status status-" + p.status + "'>" + statusIcon + "</span>" +
+                        "<button class='delete-btn' onclick='deletePost(" + p.id + ")'>&#128465;</button></div>";
+                }).join("");
+            });
     }
 
-    async function loadPosts() {
-        try {
-            const res = await fetch("/posts");
-            const posts = await res.json();
-            document.getElementById("stat-pending").textContent = posts.filter(p => p.status === "pending").length;
-            document.getElementById("stat-published").textContent = posts.filter(p => p.status === "published").length;
-            document.getElementById("stat-total").textContent = posts.length;
-            const list = document.getElementById("posts-list");
-            if (!posts.length) { list.innerHTML = "<div class=\"empty-state\"><div class=\"emoji\">&#128237;</div><p>Nenhum post ainda</p></div>"; return; }
-            list.innerHTML = posts.slice().reverse().map(p =>
-                "<div class=\"post-item\">" + getThumb(p) +
-                "<div class=\"post-info\"><div class=\"post-caption\">" + (p.caption || "(sem legenda)") + "</div>" +
-                "<div class=\"post-time\">" + p.post_type.toUpperCase() + " &middot; " + (p.schedule_time ? p.schedule_time.replace("T", " ") : "Imediato") + "</div>" +
-                (p.error_msg ? "<div class=\"post-error\">" + p.error_msg + "</div>" : "") +
-                "</div><span class=\"post-status status-" + p.status + "\">" +
-                (p.status === "pending" ? "&#9203;" : p.status === "published" ? "&#9989;" : "&#10060;") +
-                "</span><button class=\"delete-btn\" onclick=\"deletePost(" + p.id + ")\">&#128465;</button></div>"
-            ).join("");
-        } catch(e) {}
-    }
-
-    const uploadArea = document.getElementById("upload-area");
-    uploadArea.addEventListener("dragover", e => { e.preventDefault(); uploadArea.classList.add("dragover"); });
-    uploadArea.addEventListener("dragleave", () => uploadArea.classList.remove("dragover"));
-    uploadArea.addEventListener("drop", e => {
+    var uploadArea = document.getElementById("upload-area");
+    uploadArea.addEventListener("dragover", function(e) { e.preventDefault(); uploadArea.classList.add("dragover"); });
+    uploadArea.addEventListener("dragleave", function() { uploadArea.classList.remove("dragover"); });
+    uploadArea.addEventListener("drop", function(e) {
         e.preventDefault(); uploadArea.classList.remove("dragover");
-        const file = e.dataTransfer.files[0];
-        if (file) { const input = document.getElementById("file-input"); const dt = new DataTransfer(); dt.items.add(file); input.files = dt.files; handleFileSelect(input); }
+        var file = e.dataTransfer.files[0];
+        if (file) { var input = document.getElementById("file-input"); var dt = new DataTransfer(); dt.items.add(file); input.files = dt.files; handleFileSelect(input); }
     });
 
     loadPosts();
@@ -407,47 +361,47 @@ def upload_file():
 
 @app.route('/posts', methods=['GET'])
 def get_posts():
-    conn = get_db()
-    posts = [dict(row) for row in conn.execute('SELECT * FROM posts ORDER BY created_at ASC').fetchall()]
-    conn.close()
-    return jsonify(posts)
+    return jsonify(scheduled_posts)
 
 @app.route('/schedule', methods=['POST'])
 def schedule_post():
     data = request.json
-    conn = get_db()
-    conn.execute(
-        'INSERT INTO posts (media_url, thumb_url, caption, schedule_time, post_type, is_video, status, created_at) VALUES (?,?,?,?,?,?,?,?)',
-        (data.get('media_url'), data.get('thumb_url', ''), data.get('caption', ''), data.get('schedule_time'),
-         data.get('post_type', 'feed'), 1 if data.get('is_video') else 0, 'pending', datetime.now().isoformat())
-    )
-    conn.commit()
-    conn.close()
-    return jsonify({'success': True})
+    post = {
+        'id': int(datetime.now().timestamp() * 1000),
+        'media_url': data.get('media_url'),
+        'caption': data.get('caption', ''),
+        'schedule_time': data.get('schedule_time'),
+        'post_type': data.get('post_type', 'feed'),
+        'is_video': data.get('is_video', False),
+        'status': 'pending',
+        'error_msg': None,
+        'created_at': datetime.now().isoformat()
+    }
+    scheduled_posts.append(post)
+    return jsonify({'success': True, 'post': post})
 
 @app.route('/publish-now', methods=['POST'])
 def publish_now():
     data = request.json
     result = publish_to_instagram(data.get('media_url'), data.get('caption', ''), data.get('post_type', 'feed'))
-    conn = get_db()
-    conn.execute(
-        'INSERT INTO posts (media_url, thumb_url, caption, schedule_time, post_type, is_video, status, error_msg, created_at) VALUES (?,?,?,?,?,?,?,?,?)',
-        (data.get('media_url'), data.get('thumb_url', ''), data.get('caption', ''), None,
-         data.get('post_type', 'feed'), 1 if data.get('is_video') else 0,
-         'published' if result['success'] else 'error',
-         result.get('error') if not result['success'] else None,
-         datetime.now().isoformat())
-    )
-    conn.commit()
-    conn.close()
+    post = {
+        'id': int(datetime.now().timestamp() * 1000),
+        'media_url': data.get('media_url'),
+        'caption': data.get('caption', ''),
+        'schedule_time': None,
+        'post_type': data.get('post_type', 'feed'),
+        'is_video': data.get('is_video', False),
+        'status': 'published' if result['success'] else 'error',
+        'error_msg': result.get('error') if not result['success'] else None,
+        'created_at': datetime.now().isoformat()
+    }
+    scheduled_posts.append(post)
     return jsonify(result)
 
 @app.route('/delete/<int:post_id>', methods=['DELETE'])
 def delete_post(post_id):
-    conn = get_db()
-    conn.execute('DELETE FROM posts WHERE id = ?', (post_id,))
-    conn.commit()
-    conn.close()
+    global scheduled_posts
+    scheduled_posts = [p for p in scheduled_posts if p['id'] != post_id]
     return jsonify({'success': True})
 
 def publish_to_instagram(media_url, caption, post_type):
@@ -503,29 +457,21 @@ def publish_to_instagram(media_url, caption, post_type):
 def check_scheduled_posts():
     now_utc = datetime.utcnow()
     published_this_run = False
-    conn = get_db()
-    posts = [dict(row) for row in conn.execute('SELECT * FROM posts WHERE status = "pending" AND schedule_time IS NOT NULL').fetchall()]
-    conn.close()
-    for post in posts:
-        try:
-            scheduled_time = datetime.fromisoformat(post['schedule_time'])
-            scheduled_time_utc = scheduled_time + timedelta(hours=3)
-            if now_utc >= scheduled_time_utc:
-                if published_this_run:
-                    time.sleep(30)
-                result = publish_to_instagram(post['media_url'], post['caption'], post['post_type'])
-                status = 'published' if result['success'] else 'error'
-                error_msg = result.get('error') if not result['success'] else None
-                conn = get_db()
-                conn.execute('UPDATE posts SET status = ?, error_msg = ? WHERE id = ?', (status, error_msg, post['id']))
-                conn.commit()
-                conn.close()
-                published_this_run = True
-        except Exception as e:
-            conn = get_db()
-            conn.execute('UPDATE posts SET status = "error", error_msg = ? WHERE id = ?', (str(e), post['id']))
-            conn.commit()
-            conn.close()
+    for post in scheduled_posts:
+        if post['status'] == 'pending' and post['schedule_time']:
+            try:
+                scheduled_time = datetime.fromisoformat(post['schedule_time'])
+                scheduled_time_utc = scheduled_time + timedelta(hours=3)
+                if now_utc >= scheduled_time_utc:
+                    if published_this_run:
+                        time.sleep(30)
+                    result = publish_to_instagram(post['media_url'], post['caption'], post['post_type'])
+                    post['status'] = 'published' if result['success'] else 'error'
+                    post['error_msg'] = result.get('error') if not result['success'] else None
+                    published_this_run = True
+            except Exception as e:
+                post['status'] = 'error'
+                post['error_msg'] = str(e)
 
 def run_scheduler():
     schedule.every(1).minutes.do(check_scheduled_posts)
