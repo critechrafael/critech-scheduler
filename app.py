@@ -9,6 +9,7 @@ import cloudinary
 import cloudinary.uploader
 
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB
 
 ACCESS_TOKEN = os.environ.get('ACCESS_TOKEN', '')
 INSTAGRAM_USER_ID = os.environ.get('INSTAGRAM_USER_ID', '17841459866694291')
@@ -203,16 +204,13 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         if (!file) return;
         isVideo = file.type.startsWith("video/");
 
-        var reader = new FileReader();
-        reader.onload = function(e) {
-            var preview = document.getElementById("preview");
-            if (isVideo) {
-                preview.innerHTML = '<video src="' + e.target.result + '" style="max-width:100%;max-height:200px;border-radius:8px" controls></video>';
-            } else {
-                preview.innerHTML = '<img src="' + e.target.result + '" style="max-width:100%;max-height:200px;border-radius:8px;object-fit:cover">';
-            }
-        };
-        reader.readAsDataURL(file);
+        var objectUrl = URL.createObjectURL(file);
+        var preview = document.getElementById("preview");
+        if (isVideo) {
+            preview.innerHTML = '<video src="' + objectUrl + '" style="max-width:100%;max-height:200px;border-radius:8px" controls></video>';
+        } else {
+            preview.innerHTML = '<img src="' + objectUrl + '" style="max-width:100%;max-height:200px;border-radius:8px;object-fit:cover">';
+        }
 
         var progress = document.getElementById("upload-progress");
         var progressFill = document.getElementById("progress-fill");
